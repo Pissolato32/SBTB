@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simple Binance Bot</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class', // or 'media'
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              50: '#F9FAFB',
+              100: '#F3F4F6',
+              200: '#E5E7EB',
+              300: '#D1D5DB',
+              400: '#9CA3AF',
+              500: '#6B7280',
+              600: '#4B5563',
+              700: '#374151',
+              800: '#1F2937',
+              900: '#111827',
+              950: '#030712',
+            }
+          }
+        }
+      }
+    }
+  </script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.1.0",
+    "react/": "https://esm.sh/react@^19.1.0/",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
+    "vite": "https://esm.sh/vite@^6.3.5",
+    "axios": "https://esm.sh/axios@^1.9.0",
+    "express": "https://esm.sh/express@^5.1.0",
+    "dotenv": "https://esm.sh/dotenv@^16.5.0",
+    "cors": "https://esm.sh/cors@^2.8.5",
+    "crypto": "https://esm.sh/crypto@^1.0.1"
+  }
+}
+</script>
+</head>
+<body class="bg-gray-900 text-gray-100">
+  <div id="root"></div>
+  <script type="module" src="/src/index.tsx"></script>
+</body>
+</html><link rel="stylesheet" href="index.css">
+<script src="index.tsx" type="module"></script>

@@ -1,0 +1,6 @@
+{
+  "name": "Simple Binance Trading Bot (Testnet)",
+  "description": "A trading bot that interacts with the Binance Testnet API to monitor markets and simulate trading of 'cheap' cryptocurrencies. This is for demonstration and educational purposes using the Binance Testnet.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "NodeNext", // Use NodeNext for ES Modules in Node.js
+    "rootDir": "../", // Root is now the parent directory (SBTB)
+    "outDir": "../dist", // Output will be in SBTB/dist, preserving structure
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "NodeNext", // Important for ES Modules
+    "sourceMap": true,
+    "baseUrl": "../", // Base URL for path resolution is also SBTB
+    "paths": {
+      // Example: "@/*": ["src/*"] if you want to use absolute-like paths from root
+    }
+  },
+  "include": ["server/**/*.ts", "../src/types.ts", "../src/constants.ts"], // Compile files in the server directory and the shared types and constants
+  "exclude": ["node_modules", "../dist"]
+}
