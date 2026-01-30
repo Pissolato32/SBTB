@@ -15,13 +15,20 @@ This contains everything you need to run your app locally. The application consi
 2.  **Configure Backend API Keys:**
     *   Navigate to the `server` directory.
     *   Create a new file named `.env` (i.e., `server/.env`).
-    *   Add your Binance Testnet API keys to this `server/.env` file:
+    *   Use `server/.env.example` as a template.
+    *   Configure your exchange and keys:
         ```env
-        BINANCE_API_KEY=your_binance_testnet_api_key
-        BINANCE_API_SECRET=your_binance_testnet_api_secret
         PORT=3001
+        EXCHANGE=binance # or kraken, kucoin, etc.
+        IS_TESTNET=true  # Set to false for real trading
+
+        # API Keys (Generic or Exchange-Specific)
+        API_KEY=your_api_key
+        SECRET_KEY=your_api_secret
+        # OR
+        BINANCE_API_KEY=your_binance_api_key
+        BINANCE_API_SECRET=your_binance_api_secret
         ```
-    *   Replace `your_binance_testnet_api_key` and `your_binance_testnet_api_secret` with your actual keys from the Binance Testnet.
     *   `PORT=3001` is the default port for the backend server. The frontend will proxy requests to this port.
 
 3.  **Run the Full Application (Frontend & Backend):**
@@ -37,6 +44,10 @@ This contains everything you need to run your app locally. The application consi
 4.  **Alternative: Running Separately**
     *   To run only the frontend: `npm run dev`
     *   To run only the backend: `npm run server`
+
+## Persistence
+
+The bot now saves active trades and settings to `data/bot_data.json` in the root directory. This ensures that trades are not lost if the server restarts.
 
 ## Building for Production (Optional)
 
