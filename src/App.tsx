@@ -5,16 +5,28 @@ import MarketFeed from '../components/MarketFeed';
 import PortfolioStatus from '../components/PortfolioStatus';
 import ActivityFeed from '../components/ActivityFeed';
 import TradeLedgerView from '../components/TradeLedgerView';
-import { BotSettings, BotStatus, BotLog, Coin, PortfolioItem, CompletedTrade } from './types';
+import { BotSettings, BotStatus } from './types';
 import {
   checkApiKeyConfigured,
     } from '../services/binanceApiService';
-import { INITIAL_USDT_BALANCE } from './constants';
 import { useWebSocket } from './contexts/WebSocketContext';
 
 const BOT_SETTINGS_KEY = 'sbtbBotSettings'; // Chave para salvar as configurações do bot (UI)
 
 const App = (): React.ReactElement => {
+  const {
+    sendMessage,
+    isConnected,
+    botStatus: backendBotStatus,
+    settings: backendSettings,
+    logs,
+    marketData,
+    portfolio,
+    usdtBalance,
+    tradeLedger,
+    addLog: addWsLog
+  } = useWebSocket();
+
   const [settings, setSettings] = useState<BotSettings>({
     maxCoinPrice: 0.50,
     tradeAmountUSDT: 11,
@@ -31,70 +43,31 @@ const App = (): React.ReactElement => {
     trailingStopOffsetPercentage: 0.5,
   });
 
-  const {
-    sendMessage,
-    isConnected,
-    botStatus: backendBotStatus,
-    settings: backendSettings,
-    logs: backendLogs,
-    marketData: backendMarketData,
-    portfolio: backendPortfolio,
-    usdtBalance: backendUsdtBalance,
-    tradeLedger: backendTradeLedger,
-    addLog: addWsLog
-  } = useWebSocket();
+  const [localBotStatus, setLocalBotStatus] = useState<BotStatus | null>(null);
+  const botStatus = localBotStatus || backendBotStatus;
 
-  const [botStatus, setBotStatus] = useState<BotStatus>(backendBotStatus || BotStatus.INITIALIZING);
-  const [logs, setLogs] = useState<BotLog[]>(backendLogs || []);
-  const [marketData, setMarketData] = useState<Coin[]>(backendMarketData || []);
-  const [tradeLedger, setTradeLedger] = useState<CompletedTrade[]>(backendTradeLedger || []);
-  const [portfolio, setPortfolio] = useState<PortfolioItem[]>(backendPortfolio || []);
-  const [usdtBalance, setUsdtBalance] = useState<number>(backendUsdtBalance || INITIAL_USDT_BALANCE);
   const [isApiConfigured, setIsApiConfigured] = useState(false);
-
-  useEffect(() => {
-    setBotStatus(backendBotStatus);
-  }, [backendBotStatus]);
-
-  useEffect(() => {
-    setLogs(backendLogs);
-  }, [backendLogs]);
 
   useEffect(() => {
     const savedBotSettings = localStorage.getItem(BOT_SETTINGS_KEY);
     if (savedBotSettings) {
       try {
         const parsedSettings: BotSettings = JSON.parse(savedBotSettings);
-        setSettings(prevSettings => ({ ...prevSettings, ...parsedSettings, ...backendSettings }));
-        // addWsLog({ message: 'Frontend: Loaded UI settings from localStorage.', type: 'INFO' }); // Logged by context now
+        // Only update if backendSettings is different to avoid loops
+        if (JSON.stringify(parsedSettings) !== JSON.stringify(backendSettings)) {
+          setSettings(prevSettings => ({ ...prevSettings, ...parsedSettings, ...backendSettings }));
+        }
       } catch (error) {
         console.error("Failed to parse bot settings from localStorage", error);
         addWsLog({ message: 'Frontend: Failed to parse bot settings from localStorage. Using default/backend settings.', type: 'WARNING' });
         localStorage.removeItem(BOT_SETTINGS_KEY);
       }
     } else {
-      // addWsLog({ message: 'Frontend: No saved UI settings found. Using default/backend settings.', type: 'INFO' }); // Logged by context now
-      if (backendSettings && Object.keys(backendSettings).length > 0) { // Check if backendSettings is not empty
+      if (backendSettings && Object.keys(backendSettings).length > 0) {
         setSettings(backendSettings);
       }
     }
-  }, [addWsLog, backendSettings]);
-
-  useEffect(() => {
-    setMarketData(backendMarketData);
-  }, [backendMarketData]);
-
-  useEffect(() => {
-    setPortfolio(backendPortfolio);
-  }, [backendPortfolio]);
-
-  useEffect(() => {
-    setUsdtBalance(backendUsdtBalance);
-  }, [backendUsdtBalance]);
-
-  useEffect(() => {
-    setTradeLedger(backendTradeLedger);
-  }, [backendTradeLedger]);
+  }, [backendSettings]);
 
   useEffect(() => {
     if (!isConnected) {
@@ -105,15 +78,16 @@ const App = (): React.ReactElement => {
           addWsLog({ message: 'Frontend: Backend confirms API keys are configured (HTTP check).', type: 'API_KEY' });
         } else {
           addWsLog({ message: status.message || 'Frontend: Backend reports API keys are NOT configured (HTTP check).', type: 'ERROR' });
-          setBotStatus(BotStatus.ERROR);
+          setLocalBotStatus(BotStatus.ERROR);
         }
       }).catch(err => {
         addWsLog({ message: `Frontend: Error checking API key status (HTTP): ${err.message}`, type: 'ERROR' });
-        setBotStatus(BotStatus.ERROR);
+        setLocalBotStatus(BotStatus.ERROR);
       });
     } else {
         if (backendBotStatus !== BotStatus.ERROR) {
             setIsApiConfigured(true); // Assume configured if WS is connected and bot is not in error
+            setLocalBotStatus(null); // Clear local error if backend is fine
         } else {
             setIsApiConfigured(false); // If bot is in error state from backend, reflect that
         }
@@ -140,7 +114,7 @@ const App = (): React.ReactElement => {
   const handleStartBot = useCallback(async () => {
     if (!isApiConfigured) {
       addWsLog({ message: 'Frontend: Cannot start bot: API keys are not configured on backend.', type: 'ERROR' });
-      setBotStatus(BotStatus.ERROR);
+      setLocalBotStatus(BotStatus.ERROR);
       return;
     }
     sendMessage({ type: 'command', command: 'START_BOT' });
@@ -177,7 +151,8 @@ const App = (): React.ReactElement => {
               <PortfolioStatus
                 portfolio={portfolio}
                 marketData={marketData}
-                isLoading={!isConnected && portfolio.length === 0 && usdtBalance === 0}
+                usdtBalance={usdtBalance}
+                isLoading={!isConnected && portfolio.length === 0}
               />
             </div>
             <div className="lg:col-span-1">
@@ -194,7 +169,7 @@ const App = (): React.ReactElement => {
           </div>
         </main>
         <footer className="text-center p-4 text-sm text-gray-600 border-t border-gray-700 mt-auto">
-          SimuTrader Binance Bot. For Testnet use only.
+          SimuTrader Binance Bot. For Demo Mode use only.
           <p className="text-xs text-gray-700 mt-1">This is a simulation and not financial advice. Use at your own risk.</p>
         </footer>
       </div>

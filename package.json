@@ -1,5 +1,5 @@
 {
-  "name": "simple-binance-trading-bot-(testnet)",
+  "name": "simple-binance-trading-bot-testnet",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,7 +7,7 @@
     "dev": "vite",
     "build:client": "vite build",
     "preview": "vite preview",
-    "server": "ts-node-dev --respawn --transpile-only server/server.ts",
+    "server": "tsx server/server.ts",
     "build:server": "tsc -p server/tsconfig.json",
     "start:server": "node dist/server/server.js",
     "dev:full": "concurrently \"npm run dev\" \"npm run server\""
@@ -30,6 +30,7 @@
     "@types/react-dom": "^19.1.5",
     "concurrently": "^8.2.2",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.21.0",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
   }
