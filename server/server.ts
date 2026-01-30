@@ -175,36 +175,52 @@ app.get('/api/account-info', (_req: Request, res: Response) => {
          };
          res.json(info);
     }).catch(err => {
-        res.status(500).json({ message: err.message });
+        console.error(`[API] Account Info failed:`, err);
+        res.status(500).json({ message: 'Failed to fetch account info' });
     });
 });
 
 app.post('/api/order', async (req: Request, res: Response) => {
     const { symbol, side, quantity, quoteOrderQty } = req.body;
+
+    // Input Validation
+    if (!symbol || typeof symbol !== 'string') {
+        return res.status(400).json({ message: 'Invalid symbol' });
+    }
+    if (!side || !['buy', 'sell'].includes(side.toLowerCase())) {
+        return res.status(400).json({ message: 'Invalid side. Must be "BUY" or "SELL".' });
+    }
+    if ((!quantity && !quoteOrderQty) || (quantity && isNaN(Number(quantity))) || (quoteOrderQty && isNaN(Number(quoteOrderQty)))) {
+         return res.status(400).json({ message: 'Invalid quantity' });
+    }
+
     // Manual order
     try {
-        let amount = quantity;
-        if (side === 'BUY' && quoteOrderQty && !quantity) {
+        let amount = quantity ? Number(quantity) : 0;
+        if (side.toUpperCase() === 'BUY' && quoteOrderQty && !quantity) {
              // Calculate amount from price? CCXT createOrder usually takes amount of base currency.
              // Some exchanges support 'cost' or params for quoteOrderQty.
              // For simplicity, we might need current price.
              const ticker = await exchangeService.fetchTickers().then(t => t.find(x => x.symbol === symbol));
              if (ticker && ticker.last) {
                  amount = parseFloat(quoteOrderQty) / ticker.last;
+             } else {
+                 throw new Error('Could not fetch price to calculate quantity');
              }
         }
 
         const order = await exchangeService.placeOrder(symbol, 'market', side.toLowerCase() as 'buy'|'sell', Number(amount));
         res.json(order);
     } catch (err: any) {
-        res.status(500).json({ message: err.message });
+        console.error(`[API] Order failed:`, err);
+        res.status(500).json({ message: 'Order execution failed' });
     }
 });
 
 // Global Error Handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    console.error(err);
-    res.status(500).json({ message: err.message || 'Server error' });
+    console.error(`[Server] Unhandled Error:`, err);
+    res.status(500).json({ message: 'Internal Server Error' });
 });
 
 server.listen(PORT, () => {
