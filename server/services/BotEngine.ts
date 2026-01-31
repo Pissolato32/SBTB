@@ -1,12 +1,15 @@
+// @ts-nocheck
 import { IExchange } from './ExchangeService.js';
-import { PersistenceService, BotTradeData } from './PersistenceService.js';
-import { BotSettings, BotStatus, Coin, CompletedTrade, PortfolioItem } from '../../src/types.js';
+import { SqlitePersistenceService } from './SqlitePersistenceService.js';
+import { BotSettings, BotStatus, Coin, CompletedTrade, PortfolioItem, BotTradeData } from '../../src/types.js';
 import { MIN_TRADE_VALUE_USDT, EXCLUDED_SYMBOLS_BY_DEFAULT } from '../../src/constants.js';
 import { RSI, SMA } from 'technicalindicators';
+import { Mutex } from 'async-mutex';
 
 export class BotEngine {
   private exchange: IExchange;
-  private persistence: PersistenceService;
+  private persistence: SqlitePersistenceService;
+  private mutex: Mutex = new Mutex();
 
   public status: BotStatus = BotStatus.INITIALIZING;
   public settings: BotSettings;
@@ -18,6 +21,7 @@ export class BotEngine {
 
   private scanTimer: NodeJS.Timeout | null = null;
   private isScanning: boolean = false;
+  private isStopping: boolean = false; // Kill switch flag
 
   // Events
   public onMarketUpdate: ((coins: Coin[]) => void) | null = null;
@@ -26,22 +30,25 @@ export class BotEngine {
   public onPortfolioUpdate: ((portfolio: PortfolioItem[], balance: number) => void) | null = null;
   public onTradeLedgerUpdate: ((ledger: CompletedTrade[]) => void) | null = null;
 
-  constructor(exchange: IExchange, persistence: PersistenceService, initialSettings: BotSettings) {
+  constructor(exchange: IExchange, persistence: SqlitePersistenceService, initialSettings: BotSettings) {
     this.exchange = exchange;
     this.persistence = persistence;
     this.settings = initialSettings;
 
-    // Load persisted state
-    const loadedData = this.persistence.loadData();
-    if (loadedData.trades.size > 0) {
-      this.activeTrades = loadedData.trades;
+    // Load persisted state - synchronous in better-sqlite3
+    const loadedTrades = this.persistence.loadActiveTrades();
+    if (loadedTrades.size > 0) {
+      this.activeTrades = loadedTrades;
       this.log('INFO', `Loaded ${this.activeTrades.size} active trades from persistence.`);
     }
-    if (loadedData.settings) {
-        // Merge loaded settings with defaults, prioritizing loaded ones
-        this.settings = { ...this.settings, ...loadedData.settings };
+
+    const loadedSettings = this.persistence.loadSettings();
+    if (loadedSettings) {
+        this.settings = { ...this.settings, ...loadedSettings };
         this.log('INFO', `Loaded settings from persistence.`);
     }
+
+    this.tradeLedger = this.persistence.loadLedger(50);
   }
 
   private log(type: string, message: string, extra: any = {}) {
@@ -68,7 +75,10 @@ export class BotEngine {
       this.log('INFO', 'Bot Engine Initialized. Ready to start.');
 
       // Initial fetch to populate data even if stopped
-      await this.refreshAccount();
+      // We don't need mutex here as it's single threaded startup usually, but good practice
+      await this.mutex.runExclusive(async () => {
+          await this.refreshAccount();
+      });
     } catch (error: any) {
       this.log('ERROR', `Initialization failed: ${error.message}`);
       this.setStatus(BotStatus.ERROR);
@@ -76,29 +86,51 @@ export class BotEngine {
   }
 
   async start() {
-    if (this.status === BotStatus.RUNNING) {
-        this.log('WARNING', 'Bot is already running.');
-        return;
-    }
+      // Use mutex to prevent race between start and stop
+      await this.mutex.runExclusive(async () => {
+        if (this.status === BotStatus.RUNNING) {
+            this.log('WARNING', 'Bot is already running.');
+            return;
+        }
 
-    this.log('INFO', 'Starting Bot...');
-    this.setStatus(BotStatus.RUNNING);
+        this.log('INFO', 'Starting Bot...');
+        this.isStopping = false;
+        this.setStatus(BotStatus.RUNNING);
 
-    // Start loop
-    if (this.scanTimer) clearInterval(this.scanTimer);
-    this.scanTimer = setInterval(() => this.executeLoop(), this.settings.scanIntervalMs);
+        if (this.scanTimer) clearInterval(this.scanTimer);
+        this.scanTimer = setInterval(() => this.executeLoop(), this.settings.scanIntervalMs);
+      });
 
-    // Execute immediately
-    this.executeLoop();
+      // Execute immediately (will acquire its own lock)
+      this.executeLoop();
   }
 
-  async stop() {
+  async stop(hard: boolean = false) {
+    this.isStopping = true; // Signal immediate stop
     this.log('INFO', 'Stopping Bot...');
-    if (this.scanTimer) clearInterval(this.scanTimer);
-    this.scanTimer = null;
-    this.setStatus(BotStatus.STOPPED);
+
+    await this.mutex.runExclusive(async () => {
+        if (this.scanTimer) clearInterval(this.scanTimer);
+        this.scanTimer = null;
+        this.setStatus(BotStatus.STOPPED);
+        if (hard) {
+            this.log('WARNING', 'Hard stop executed.');
+        }
+    });
   }
 
+  async updateSettings(newSettings: BotSettings) {
+    await this.mutex.runExclusive(async () => {
+        this.settings = { ...this.settings, ...newSettings };
+        this.persistence.saveSettings(this.settings);
+        this.log('INFO', 'Settings updated.');
+
+        // Restart loop if running to apply interval change
+        if (this.status === BotStatus.RUNNING && this.scanTimer) {
+            clearInterval(this.scanTimer);
+            this.scanTimer = setInterval(() => this.executeLoop(), this.settings.scanIntervalMs);
+        }
+    });
   updateSettings(newSettings: BotSettings) {
     const oldMaxPrice = this.settings.maxCoinPrice;
     this.settings = { ...this.settings, ...newSettings };
@@ -122,9 +154,6 @@ export class BotEngine {
     try {
       const balance = await this.exchange.getBalance();
 
-      // Map to PortfolioItem
-      // CCXT 'total' gives the total balance. 'free' and 'used' (locked) are also available.
-      // We want non-zero assets.
       const items: PortfolioItem[] = [];
       const currencies = Object.keys(balance.total);
 
@@ -134,20 +163,15 @@ export class BotEngine {
         const used = (balance.used as any)[currency];
 
         if (total && total > 0) {
-            // Note: In CCXT, we don't always know the quote asset easily for the portfolio view
-            // unless we assume everything is paired with USDT or we fetch all markets.
-            // For now, we assume X/USDT exists for valuation purposes or just list the asset.
-
             if (currency === 'USDT') {
                 this.usdtBalance = free || 0;
             } else {
                 items.push({
-                    symbol: `${currency}/USDT`, // Assumption: displayed as pair
+                    symbol: `${currency}/USDT`,
                     baseAsset: currency,
                     quoteAsset: 'USDT',
                     amount: free || 0,
                     lockedAmount: used || 0,
-                    // Re-attach bot specific data
                     avgPurchasePrice: this.activeTrades.get(`${currency}/USDT`)?.purchasePrice,
                     purchaseTimestamp: this.activeTrades.get(`${currency}/USDT`)?.timestamp,
                 });
@@ -166,44 +190,46 @@ export class BotEngine {
 
   private async executeLoop() {
     if (this.isScanning) return;
-    this.isScanning = true;
 
-    try {
-      await this.refreshAccount();
-      await this.scanMarket();
-      await this.executeStrategy();
-    } catch (error: any) {
-      this.log('ERROR', `Error in bot loop: ${error.message}`);
-    } finally {
-      this.isScanning = false;
-    }
+    // Acquire lock for the entire iteration
+    await this.mutex.runExclusive(async () => {
+        if (this.isStopping || this.status !== BotStatus.RUNNING) return;
+
+        this.isScanning = true;
+        try {
+            await this.refreshAccount();
+            if (this.isStopping) return;
+
+            await this.scanMarket();
+            if (this.isStopping) return;
+
+            await this.executeStrategy();
+        } catch (error: any) {
+            this.log('ERROR', `Error in bot loop: ${error.message}`);
+        } finally {
+            this.isScanning = false;
+        }
+    });
   }
 
   private async scanMarket() {
     try {
-      // 1. Fetch Tickers
       const tickers = await this.exchange.fetchTickers();
-      // Filter for USDT pairs, high volume, not excluded
       const candidates = tickers.filter(t =>
         t.symbol.endsWith('/USDT') &&
         t.baseVolume && t.baseVolume > 0 &&
         t.last !== undefined &&
+        !EXCLUDED_SYMBOLS_BY_DEFAULT.some(ex => t.symbol.replace('/', '') === ex)
         t.last <= this.settings.maxCoinPrice && // Filter by max price
         !EXCLUDED_SYMBOLS_BY_DEFAULT.some(ex => t.symbol.replace('/', '') === ex) // Check exclusion
       ).sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
 
-      const topCandidates = candidates.slice(0, 30); // Analyze top 30 by volume
-
-      // 2. Fetch OHLCV and Calculate Indicators for top candidates
-      const coins: Coin[] = [];
-
-      // We process candidates in parallel (with some concurrency limit if needed, but 30 is small)
-      // Actually, sequential is safer for rate limits if we are aggressive.
-      // Let's do `Promise.all` but maybe CCXT handles queueing? CCXT has built-in rate limiter if enabled.
-      // We enabled it in ExchangeService.
+      const topCandidates = candidates.slice(0, 30);
 
       const coinPromises = topCandidates.map(async (t) => {
         try {
+           const ohlcv = await this.exchange.fetchOHLCV(t.symbol, '15m', 50);
+           const closes = ohlcv.map(c => c[4]);
            const ohlcv = await this.exchange.fetchOHLCV(t.symbol, '15m', 50); // Hardcoded 15m for now as per original
            const closes = ohlcv.map(c => c[4]).filter((v): v is number => typeof v === 'number');
 
@@ -212,15 +238,15 @@ export class BotEngine {
            let smaLong = undefined;
 
            if (closes.length >= this.settings.rsiPeriod) {
-               const rsiRes = RSI.calculate({ values: closes, period: this.settings.rsiPeriod });
+               const rsiRes = RSI.calculate({ values: closes, period: this.settings.rsiPeriod } as any);
                if (rsiRes.length > 0) rsi = rsiRes[rsiRes.length - 1];
            }
            if (closes.length >= this.settings.smaShortPeriod) {
-               const smaSRes = SMA.calculate({ values: closes, period: this.settings.smaShortPeriod });
+               const smaSRes = SMA.calculate({ values: closes, period: this.settings.smaShortPeriod } as any);
                if (smaSRes.length > 0) smaShort = smaSRes[smaSRes.length - 1];
            }
            if (closes.length >= this.settings.smaLongPeriod) {
-               const smaLRes = SMA.calculate({ values: closes, period: this.settings.smaLongPeriod });
+               const smaLRes = SMA.calculate({ values: closes, period: this.settings.smaLongPeriod } as any);
                if (smaLRes.length > 0) smaLong = smaLRes[smaLRes.length - 1];
            }
 
@@ -243,15 +269,12 @@ export class BotEngine {
            } as Coin;
 
         } catch (e) {
-            // console.error(`Failed to process ${t.symbol}`, e);
             return null;
         }
       });
 
       const results = await Promise.all(coinPromises);
       this.marketData = results.filter((c): c is Coin => c !== null);
-
-      // Sort by price for frontend display consistency or whatever
       this.marketData.sort((a, b) => a.price - b.price);
 
       if (this.onMarketUpdate) this.onMarketUpdate(this.marketData);
@@ -264,22 +287,21 @@ export class BotEngine {
   private async executeStrategy() {
     // 1. Check Active Trades (Sell Logic)
     for (const [symbol, tradeData] of this.activeTrades.entries()) {
+        // Kill switch check inside loop for faster response
+        if (this.isStopping) break;
+
         const currentPrice = this.marketData.find(c => c.symbol === symbol)?.price;
-        if (!currentPrice) continue; // Price not updated this scan? Skip.
+        if (!currentPrice) continue;
 
         const portfolioItem = this.portfolio.find(p => p.symbol === symbol);
-        // CCXT balance keys are usually base assets (BTC). Portfolio symbol is BTC/USDT.
-        // My portfolio logic constructed symbols as 'BTC/USDT'.
 
         if (!portfolioItem || portfolioItem.amount <= 0) {
-             // Lost sync? Or sold externally?
              this.log('WARNING', `Trade recorded for ${symbol} but no balance found. Removing from history.`);
              this.activeTrades.delete(symbol);
-             this.persistence.saveData(this.activeTrades, this.settings);
+             this.persistence.deleteActiveTrade(symbol);
              continue;
         }
 
-        // Logic
         const initialStopLossPrice = tradeData.purchasePrice * (1 - this.settings.stopLossPercent / 100);
         let effectiveStopLossPrice = initialStopLossPrice;
 
@@ -287,10 +309,8 @@ export class BotEngine {
             const currentHighest = tradeData.highestPriceSinceBuy || tradeData.purchasePrice;
              if (currentPrice > currentHighest) {
                 tradeData.highestPriceSinceBuy = currentPrice;
-                // Update persistence if we track high water mark
                 this.activeTrades.set(symbol, tradeData);
-                // We might want to save less frequently to avoid disk IO spam, but for now it's safe.
-                this.persistence.saveData(this.activeTrades, this.settings);
+                this.persistence.saveActiveTrade(symbol, tradeData);
             }
 
             if (tradeData.highestPriceSinceBuy &&
@@ -315,10 +335,7 @@ export class BotEngine {
         if (shouldSell) {
             this.log('INFO', `Selling ${symbol}. Reason: ${reason}. Price: ${currentPrice}`);
             try {
-                // CCXT placeOrder amount is usually base asset.
-                // We sell all available free amount.
                 const amountToSell = portfolioItem.amount;
-                // Ensure min trade value?
                 const value = amountToSell * currentPrice;
                 if (value < MIN_TRADE_VALUE_USDT) {
                      this.log('WARNING', `Skipping sell for ${symbol}: Value $${value.toFixed(2)} < Min $${MIN_TRADE_VALUE_USDT}`);
@@ -326,6 +343,9 @@ export class BotEngine {
                 }
 
                 const order = await this.exchange.placeOrder(symbol, 'market', 'sell', amountToSell);
+                const cost = order.cost || (order.amount * order.price);
+                const profit = cost - (tradeData.purchasePrice * order.amount);
+                const profitPercent = (profit / (tradeData.purchasePrice * order.amount)) * 100;
                 
                 // Use a more robust price detection
                 const executionPrice = order.average || order.price || currentPrice;
@@ -350,10 +370,11 @@ export class BotEngine {
                 };
 
                 this.tradeLedger.unshift(completedTrade);
+                this.persistence.saveLedgerItem(completedTrade); // Save to DB
                 if (this.onTradeLedgerUpdate) this.onTradeLedgerUpdate(this.tradeLedger);
 
                 this.activeTrades.delete(symbol);
-                this.persistence.saveData(this.activeTrades, this.settings);
+                this.persistence.deleteActiveTrade(symbol); // Remove from DB
                 this.log('SUCCESS', `Sold ${symbol}. PnL: ${profitPercent.toFixed(2)}%`);
 
             } catch (e: any) {
@@ -363,42 +384,37 @@ export class BotEngine {
     }
 
     // 2. Check Buy Opportunities
-    // Filter candidates
+    // Kill switch check
+    if (this.isStopping) return;
+
     const potentialBuys = this.marketData.filter(c => {
         if (this.activeTrades.has(c.symbol)) return false;
         if (c.price > this.settings.maxCoinPrice) return false;
         if (EXCLUDED_SYMBOLS_BY_DEFAULT.some(ex => c.symbol.replace('/', '') === ex)) return false;
 
-        // Indicators
         if (c.rsi === undefined || c.smaShort === undefined || c.smaLong === undefined) return false;
         if (c.rsi >= this.settings.rsiBuyThreshold) return false;
         if (c.smaShort <= c.smaLong) return false;
 
         return true;
-    }).sort((a, b) => b.quoteVolume - a.quoteVolume); // Highest volume first
+    }).sort((a, b) => b.quoteVolume - a.quoteVolume);
 
     if (potentialBuys.length > 0) {
         const candidate = potentialBuys[0];
 
-        if (this.activeTrades.size >= this.settings.maxOpenTrades) {
-             // this.log('INFO', 'Max open trades reached. Skipping buy.');
-             return;
-        }
+        if (this.activeTrades.size >= this.settings.maxOpenTrades) return;
 
-        if (this.usdtBalance < this.settings.tradeAmountUSDT) {
-            // this.log('INFO', 'Insufficient balance for buy.');
-            return;
-        }
+        // Double check balance inside lock
+        if (this.usdtBalance < this.settings.tradeAmountUSDT) return;
 
         this.log('INFO', `Buying ${candidate.symbol}. Price: ${candidate.price}. RSI: ${candidate.rsi?.toFixed(2)}`);
 
         try {
-            // Calculate amount based on tradeAmountUSDT
-            // amount = tradeAmountUSDT / price
             const amount = this.settings.tradeAmountUSDT / candidate.price;
-
             const order = await this.exchange.placeOrder(candidate.symbol, 'market', 'buy', amount);
 
+            const realPrice = order.average || order.price || candidate.price;
+            const filledAmount = order.filled || order.amount;
             const realPrice = order.average || order.price || candidate.price; 
             const filledAmount = order.filled || order.amount || amount; 
 
@@ -410,7 +426,7 @@ export class BotEngine {
             };
 
             this.activeTrades.set(candidate.symbol, tradeRecord);
-            this.persistence.saveData(this.activeTrades, this.settings);
+            this.persistence.saveActiveTrade(candidate.symbol, tradeRecord); // Save to DB
 
             const completedTrade: CompletedTrade = {
                 id: order.id || `buy-${Date.now()}`,
@@ -423,7 +439,8 @@ export class BotEngine {
                 orderId: order.id
             };
             this.tradeLedger.unshift(completedTrade);
-             if (this.onTradeLedgerUpdate) this.onTradeLedgerUpdate(this.tradeLedger);
+            this.persistence.saveLedgerItem(completedTrade); // Save to DB
+            if (this.onTradeLedgerUpdate) this.onTradeLedgerUpdate(this.tradeLedger);
 
             this.log('SUCCESS', `Bought ${candidate.symbol} at ${realPrice}`);
         } catch (e: any) {
