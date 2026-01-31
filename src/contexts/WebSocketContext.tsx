@@ -2,7 +2,9 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { BotLog, BotStatus, Coin, PortfolioItem, CompletedTrade, BotSettings } from '../types';
 import { INITIAL_USDT_BALANCE } from '../constants';
 
-const BACKEND_WS_URL = `ws://${window.location.hostname}:3001`; // Assumes backend is on port 3001
+const BACKEND_WS_URL = window.location.protocol === 'https:' 
+  ? `wss://${window.location.hostname}:3001` 
+  : `ws://localhost:3001`; // Usando localhost para coincidir com o servidor backend
 
 interface WebSocketContextType {
   sendMessage: (message: any) => void;
@@ -78,7 +80,6 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
 
         switch (message.type) {
           case 'log':
-            // Use frontendAddLog to ensure consistent log structure and limits
             frontendAddLog(message.payload);
             break;
           case 'status':
@@ -89,7 +90,6 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
             break;
           case 'market_data_init':
             setMarketData(message.payload.sort((a: Coin, b: Coin) => a.price - b.price));
-            // frontendAddLog({ message: `Frontend: Received initial market data (${message.payload.length} coins).`, type: 'INFO' });
             break;
           case 'market_update_single':
             setMarketData((prevData: Coin[]) => {
@@ -107,11 +107,9 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
           case 'portfolio_update':
              setPortfolio(message.payload.portfolio);
              setUsdtBalance(message.payload.usdtBalance);
-             // frontendAddLog({ message: 'Frontend: Received portfolio update from backend.', type: 'INFO' });
              break;
           case 'trade_ledger_update':
              setTradeLedger(message.payload);
-             // frontendAddLog({ message: `Frontend: Received updated trade ledger (${message.payload.length} entries).`, type: 'INFO' });
              break;
           case 'initial_state':
             const {
@@ -125,11 +123,15 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
             } = message.payload;
             setBotStatus(initialStatus);
             setSettings(prev => ({...prev, ...initialSettings}));
+            
             if (initialLogs && initialLogs.length > 0) {
-                const currentLogIds = new Set(logs.map(l => l.id));
-                const newLogsFromServer = initialLogs.filter((l: BotLog) => !currentLogIds.has(l.id));
-                setLogs(prev => [...newLogsFromServer, ...prev].slice(0, 200));
+                setLogs(prev => {
+                    const currentLogIds = new Set(prev.map(l => l.id));
+                    const newLogsFromServer = initialLogs.filter((l: BotLog) => !currentLogIds.has(l.id));
+                    return [...newLogsFromServer, ...prev].slice(0, 200);
+                });
             }
+            
             setPortfolio(initialPortfolio || []);
             setUsdtBalance(initialUsdtBalance || 0);
             setTradeLedger(initialTradeLedger || []);
@@ -147,8 +149,10 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
     };
 
     ws.onerror = (error) => {
-      console.error('Frontend: WebSocket error:', error);
-      frontendAddLog({ message: 'Frontend: WebSocket error occurred.', type: 'ERROR' });
+      console.error('Frontend: WebSocket error detail:', error);
+      // @ts-ignore
+      const message = error.message || 'Erro de conexão ou handshake';
+      frontendAddLog({ message: `Frontend: WebSocket error: ${message}`, type: 'ERROR' });
     };
 
     ws.onclose = (event) => {
@@ -162,7 +166,7 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
     };
 
     wsRef.current = ws;
-  }, [frontendAddLog, logs]); // Added logs to dependency array for initial_state log merging
+  }, [frontendAddLog]); 
 
   useEffect(() => {
     connectWebSocket();

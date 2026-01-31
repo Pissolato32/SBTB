@@ -12,6 +12,8 @@ import { BotSettings, BotStatus } from '../src/types.js';
 
 const configService = ConfigService.getInstance();
 const config = configService.getConfig();
+import path from 'path';
+dotenv.config({ path: path.resolve(process.cwd(), 'server', '.env') });
 
 const app = express();
 app.use(helmet()); // Apply security headers
@@ -44,12 +46,19 @@ const persistence = new SqlitePersistenceService();
 const exchangeService = new CcxtExchange(config.exchangeId);
 const botEngine = new BotEngine(exchangeService, persistence, defaultSettings);
 
-botEngine.initialize();
+botEngine.initialize().catch(err => {
+    console.error('[Critical] Bot Engine failed to initialize:', err);
+    process.exit(1);
+});
 
 // --- WebSocket Server ---
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ 
+    server,
+    // Garante que o WS aceite conexões de qualquer origem em desenvolvimento
+    verifyClient: () => true 
+});
 const clients: Set<WebSocket> = new Set();
 
 // Hook up Bot Engine Events to WebSocket
@@ -201,6 +210,6 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 server.listen(PORT, () => {
-    console.log(`Backend server running on port ${PORT}`);
-    console.log(`Exchange: ${exchangeId}`);
+    console.log(`[Server] Backend running on http://localhost:${PORT}`);
+    console.log(`[Server] WebSocket Server attached to same port`);
 });

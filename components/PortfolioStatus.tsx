@@ -5,10 +5,11 @@ import { PortfolioItem, Coin } from '../src/types';
 interface PortfolioStatusProps {
   portfolio: PortfolioItem[];
   marketData: Coin[]; // To get current prices
+  usdtBalance: number;
   isLoading: boolean;
 }
 
-const PortfolioStatus: React.FC<PortfolioStatusProps> = ({ portfolio, marketData, isLoading }) => {
+const PortfolioStatus: React.FC<PortfolioStatusProps> = ({ portfolio, marketData, usdtBalance, isLoading }) => {
   if (isLoading) {
     return (
       <div className="bg-gray-800 p-6 rounded-lg shadow-xl mb-6">
@@ -18,22 +19,14 @@ const PortfolioStatus: React.FC<PortfolioStatusProps> = ({ portfolio, marketData
     );
   }
 
-  if (portfolio.length === 0) {
-    return (
-      <div className="bg-gray-800 p-6 rounded-lg shadow-xl mb-6">
-        <h2 className="text-xl font-semibold text-sky-300 mb-4 border-b border-gray-700 pb-2">Current Portfolio</h2>
-        <p className="text-gray-400">No active positions found in your Binance Testnet account. Start the bot to trade or deposit assets into your Testnet account.</p>
-      </div>
-    );
-  }
-
   const calculateTotalValue = () => {
-    return portfolio.reduce((total, item) => {
+    const assetsValue = portfolio.reduce((total, item) => {
       const coinData = marketData.find(c => c.symbol === item.symbol);
       const currentPrice = coinData ? coinData.price : (item.avgPurchasePrice || 0); // Fallback to purchase price if market data missing
       const currentValue = (item.amount + item.lockedAmount) * currentPrice;
       return total + currentValue;
     }, 0);
+    return assetsValue + usdtBalance;
   };
   
   const totalPortfolioValue = calculateTotalValue();
@@ -65,6 +58,27 @@ const PortfolioStatus: React.FC<PortfolioStatusProps> = ({ portfolio, marketData
             </tr>
           </thead>
           <tbody className="text-gray-200 text-sm font-light">
+            {/* Linha para o saldo em dinheiro (USDT) */}
+            <tr className="border-b border-gray-700 bg-gray-750/30">
+              <td className="py-3 px-4 font-semibold text-green-400">USDT (Cash)</td>
+              <td className="py-3 px-4 text-right font-mono">{usdtBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+              <td className="py-3 px-4 text-right font-mono">{usdtBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+              <td className="py-3 px-4 text-right font-mono">0.00</td>
+              <td className="py-3 px-4 text-right font-mono text-gray-500">N/A</td>
+              <td className="py-3 px-4 text-right font-mono">$1.00</td>
+              <td className="py-3 px-4 text-right font-mono">${usdtBalance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+              <td className="py-3 px-4 text-right font-mono text-gray-500">N/A</td>
+              <td className="py-3 px-4 text-right font-mono text-gray-500">N/A</td>
+            </tr>
+
+            {portfolio.length === 0 && (
+              <tr>
+                <td colSpan={9} className="py-8 text-center text-gray-500 italic">
+                  Nenhuma outra posição ativa no momento.
+                </td>
+              </tr>
+            )}
+
             {portfolio.map((item) => {
               const coinData = marketData.find(c => c.symbol === item.symbol);
               const currentPrice = coinData ? coinData.price : (item.avgPurchasePrice || 0);

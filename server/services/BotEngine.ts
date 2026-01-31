@@ -131,6 +131,23 @@ export class BotEngine {
             this.scanTimer = setInterval(() => this.executeLoop(), this.settings.scanIntervalMs);
         }
     });
+  updateSettings(newSettings: BotSettings) {
+    const oldMaxPrice = this.settings.maxCoinPrice;
+    this.settings = { ...this.settings, ...newSettings };
+    this.persistence.saveData(this.activeTrades, this.settings);
+    this.log('INFO', 'Settings updated.');
+
+    // Re-filter existing market data if price limit changed
+    if (this.settings.maxCoinPrice !== oldMaxPrice) {
+      this.marketData = this.marketData.filter(c => c.price <= this.settings.maxCoinPrice);
+      if (this.onMarketUpdate) this.onMarketUpdate(this.marketData);
+    }
+
+    // Restart loop if running to apply interval change
+    if (this.status === BotStatus.RUNNING && this.scanTimer) {
+        clearInterval(this.scanTimer);
+        this.scanTimer = setInterval(() => this.executeLoop(), this.settings.scanIntervalMs);
+    }
   }
 
   private async refreshAccount() {
@@ -164,6 +181,7 @@ export class BotEngine {
       this.portfolio = items;
 
       if (this.onPortfolioUpdate) this.onPortfolioUpdate(this.portfolio, this.usdtBalance);
+      this.log('INFO', `Account refreshed. USDT Balance: ${this.usdtBalance.toFixed(2)}`);
 
     } catch (error: any) {
       this.log('ERROR', `Failed to refresh account: ${error.message}`);
@@ -202,6 +220,8 @@ export class BotEngine {
         t.baseVolume && t.baseVolume > 0 &&
         t.last !== undefined &&
         !EXCLUDED_SYMBOLS_BY_DEFAULT.some(ex => t.symbol.replace('/', '') === ex)
+        t.last <= this.settings.maxCoinPrice && // Filter by max price
+        !EXCLUDED_SYMBOLS_BY_DEFAULT.some(ex => t.symbol.replace('/', '') === ex) // Check exclusion
       ).sort((a, b) => (b.quoteVolume || 0) - (a.quoteVolume || 0));
 
       const topCandidates = candidates.slice(0, 30);
@@ -210,6 +230,8 @@ export class BotEngine {
         try {
            const ohlcv = await this.exchange.fetchOHLCV(t.symbol, '15m', 50);
            const closes = ohlcv.map(c => c[4]);
+           const ohlcv = await this.exchange.fetchOHLCV(t.symbol, '15m', 50); // Hardcoded 15m for now as per original
+           const closes = ohlcv.map(c => c[4]).filter((v): v is number => typeof v === 'number');
 
            let rsi = undefined;
            let smaShort = undefined;
@@ -324,14 +346,22 @@ export class BotEngine {
                 const cost = order.cost || (order.amount * order.price);
                 const profit = cost - (tradeData.purchasePrice * order.amount);
                 const profitPercent = (profit / (tradeData.purchasePrice * order.amount)) * 100;
+                
+                // Use a more robust price detection
+                const executionPrice = order.average || order.price || currentPrice;
+                const filledAmount = order.filled || order.amount || amountToSell;
+                const cost = order.cost || (filledAmount * executionPrice);
+                
+                const profit = cost - (tradeData.purchasePrice * filledAmount);
+                const profitPercent = (profit / (tradeData.purchasePrice * filledAmount)) * 100;
 
                 const completedTrade: CompletedTrade = {
-                    id: order.id,
+                    id: order.id || `sell-${Date.now()}`,
                     timestamp: Date.now(),
                     type: 'SELL',
                     pair: symbol,
-                    price: order.price || currentPrice,
-                    amount: order.amount,
+                    price: executionPrice,
+                    amount: filledAmount,
                     cost: cost,
                     orderId: order.id,
                     profitAmount: profit,
@@ -385,6 +415,8 @@ export class BotEngine {
 
             const realPrice = order.average || order.price || candidate.price;
             const filledAmount = order.filled || order.amount;
+            const realPrice = order.average || order.price || candidate.price; 
+            const filledAmount = order.filled || order.amount || amount; 
 
             const tradeRecord: BotTradeData = {
                 purchasePrice: realPrice,
@@ -397,7 +429,7 @@ export class BotEngine {
             this.persistence.saveActiveTrade(candidate.symbol, tradeRecord); // Save to DB
 
             const completedTrade: CompletedTrade = {
-                id: order.id,
+                id: order.id || `buy-${Date.now()}`,
                 timestamp: Date.now(),
                 type: 'BUY',
                 pair: candidate.symbol,

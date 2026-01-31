@@ -50,8 +50,8 @@ const MarketFeed: React.FC<MarketFeedProps> = ({ coins, maxCoinPrice, isLoading 
             </tr>
           </thead>
           <tbody className="text-gray-200 text-sm font-light">
-            {coins.map((coin) => (
-              <tr key={coin.id} className="border-b border-gray-700 hover:bg-gray-750 transition-colors">
+            {coins.map((coin, index) => (
+              <tr key={`${coin.id}-${index}`} className="border-b border-gray-700 hover:bg-gray-750 transition-colors">
                 <td className="py-3 px-4">
                   <div className="font-semibold text-sky-400">{coin.symbol}</div>
                   <div className="text-xs text-gray-500">{coin.baseAsset}/USDT</div>
