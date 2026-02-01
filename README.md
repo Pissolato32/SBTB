@@ -1,70 +1,120 @@
 # SimuTrader Binance Bot (Testnet)
 
-This contains everything you need to run your app locally. The application consists of a React frontend (Vite) and a Node.js/Express backend.
+A robust, full-stack cryptocurrency trading bot built with React, Node.js (Express), and SQLite. Designed for Binance Testnet (default) but compatible with other exchanges via CCXT.
 
-## Run Locally
+## Architecture
 
-**Prerequisites:** Node.js (v18 or higher recommended)
+*   **Frontend**: React 19 + Vite + TailwindCSS. Provides a real-time dashboard for monitoring market data, bot status, portfolio, and trade history.
+*   **Backend**: Node.js + Express. Handles API requests and runs the trading engine.
+*   **Trading Engine**: `BotEngine` class managing market scanning (RSI/SMA strategies), trade execution, and risk management (Stop-loss, Take-profit).
+*   **Persistence**: SQLite (`better-sqlite3`) with WAL mode. Stores active trades, trade history (ledger), and bot settings locally in `data/bot.db`.
+*   **Concurrency**: `async-mutex` ensures safe state transitions and prevents race conditions during trade execution.
+*   **Communication**: WebSocket for real-time updates (market data, logs, portfolio) from backend to frontend.
 
-1.  **Install Dependencies:**
-    Open your terminal in the project root and run:
+## Prerequisites
+
+*   Node.js (v18 or higher recommended)
+*   npm
+
+## Installation
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository-url>
+    cd <repository-directory>
+    ```
+
+2.  **Install Dependencies:**
     ```bash
     npm install
     ```
 
-2.  **Configure Backend API Keys:**
-    *   Navigate to the `server` directory.
-    *   Create a new file named `.env` (i.e., `server/.env`).
-    *   Use `server/.env.example` as a template.
-    *   Configure your exchange and keys:
-        ```env
-        PORT=3001
-        EXCHANGE=binance # or kraken, kucoin, etc.
-        IS_TESTNET=true  # Set to false for real trading
+## Configuration
 
-        # API Keys (Generic or Exchange-Specific)
-        API_KEY=your_api_key
-        SECRET_KEY=your_api_secret
-        # OR
-        BINANCE_API_KEY=your_binance_api_key
-        BINANCE_API_SECRET=your_binance_api_secret
-        ```
-    *   `PORT=3001` is the default port for the backend server. The frontend will proxy requests to this port.
-
-3.  **Run the Full Application (Frontend & Backend):**
-    Go back to the project root directory in your terminal and run:
+1.  Navigate to the `server` directory and create a `.env` file:
     ```bash
-    npm run dev:full
+    cp server/.env.example server/.env
     ```
-    This command will:
-    *   Start the Vite development server for the frontend (usually on http://localhost:5173).
-    *   Start the Node.js/Express backend server (usually on http://localhost:3001).
-    *   Open your browser to the frontend application.
 
-4.  **Alternative: Running Separately**
-    *   To run only the frontend: `npm run dev`
-    *   To run only the backend: `npm run server`
+2.  Edit `server/.env` with your API keys:
+    ```env
+    PORT=3001
+    EXCHANGE=binance
+    IS_TESTNET=true  # Set to false for real trading (USE AT YOUR OWN RISK)
 
-## Persistence
+    # Binance Testnet Keys
+    BINANCE_TESTNET_API_KEY=your_testnet_api_key
+    BINANCE_TESTNET_SECRET_KEY=your_testnet_secret_key
 
-The bot now saves active trades and settings to `data/bot_data.json` in the root directory. This ensures that trades are not lost if the server restarts.
+    # Or Real Keys
+    # BINANCE_API_KEY=your_real_api_key
+    # BINANCE_API_SECRET=your_real_secret_key
+    ```
 
-## Building for Production (Optional)
+## Running the Application
 
-1.  **Build the frontend:**
+### Development Mode
+
+Run both frontend and backend concurrently:
+
+```bash
+npm run dev:full
+```
+
+*   Frontend: http://localhost:5173
+*   Backend: http://localhost:3001
+
+### Running Separately
+
+*   **Frontend**: `npm run dev`
+*   **Backend**: `npm run server` (uses `tsx` for direct TypeScript execution)
+
+## Testing & Quality
+
+*   **Run Unit Tests**:
+    ```bash
+    npm test
+    ```
+    Uses `vitest` to run tests for `BotEngine`, `SqlitePersistenceService`, and `ConfigService`.
+
+*   **Linting**:
+    ```bash
+    npm run lint
+    ```
+    Uses ESLint with TypeScript and React support.
+
+*   **Formatting**:
+    ```bash
+    npm run format
+    ```
+    Uses Prettier.
+
+## Building for Production
+
+1.  **Build Frontend**:
     ```bash
     npm run build:client
     ```
-    This creates a `dist` folder with static assets.
+    Outputs to `dist/`.
 
-2.  **Build the backend:**
+2.  **Build Backend**:
     ```bash
     npm run build:server
     ```
-    This compiles the TypeScript server code into `dist/server`.
+    Outputs to `dist/server/`.
 
-3.  **Run the production backend:**
+3.  **Run Production Server**:
     ```bash
     npm run start:server
     ```
-    You would then typically serve the frontend's `dist` folder using a static file server or configure the backend to serve it.
+
+## Strategies
+
+The bot currently implements a basic strategy based on:
+*   **RSI (Relative Strength Index)**: Buys when RSI is below a threshold (default 30).
+*   **SMA (Simple Moving Average)**: Checks trend alignment (Short SMA > Long SMA).
+*   **Risk Management**: Configurable Stop Loss, Take Profit, and Trailing Stop.
+
+## Disclaimer
+
+This software is for educational and testing purposes only. Using it on real markets involves financial risk. The authors are not responsible for any financial losses.

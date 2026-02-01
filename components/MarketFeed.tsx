@@ -29,7 +29,7 @@ const MarketFeed: React.FC<MarketFeedProps> = ({ coins, maxCoinPrice, isLoading 
         <h2 className="text-xl font-semibold text-sky-300 mb-4 border-b border-gray-700 pb-2">
             Monitored Coins (Under ${maxCoinPrice.toFixed(Math.max(2, (Math.log10(1/Math.max(0.00000001,maxCoinPrice)) || 0) + 2))})
         </h2>
-        <p className="text-gray-400">No coins found on Binance Testnet below ${maxCoinPrice.toFixed(2)} matching liquidity criteria. Adjust "Max Coin Price" or wait for market changes.</p>
+        <p className="text-gray-400">No coins found on Binance Testnet below ${maxCoinPrice.toFixed(2)} matching liquidity criteria. Adjust &quot;Max Coin Price&quot; or wait for market changes.</p>
       </div>
     );
   }

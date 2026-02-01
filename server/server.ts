@@ -12,8 +12,6 @@ import { BotSettings, BotStatus } from '../src/types.js';
 
 const configService = ConfigService.getInstance();
 const config = configService.getConfig();
-import path from 'path';
-dotenv.config({ path: path.resolve(process.cwd(), 'server', '.env') });
 
 const app = express();
 app.use(helmet()); // Apply security headers

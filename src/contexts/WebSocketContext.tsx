@@ -111,7 +111,7 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
           case 'trade_ledger_update':
              setTradeLedger(message.payload);
              break;
-          case 'initial_state':
+          case 'initial_state': {
             const {
                 botStatus: initialStatus,
                 settings: initialSettings,
@@ -138,6 +138,7 @@ export const WebSocketProvider: React.FC<{ children: ReactNode }> = ({ children 
             setMarketData(initialMarketData ? initialMarketData.sort((a: Coin, b: Coin) => a.price - b.price) : []);
             frontendAddLog({ message: 'Frontend: Received initial state from backend.', type: 'SUCCESS' });
              break;
+          }
           default:
             console.warn('Frontend: Received unknown WS message type:', message.type, message);
             frontendAddLog({ message: `Frontend: Received unknown WS message type: ${message.type}`, type: 'WARNING' });
