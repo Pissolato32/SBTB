@@ -84,6 +84,13 @@ export interface BotLog {
   reason?: string; 
 }
 
+export interface BotTradeData {
+  purchasePrice: number;
+  amount: number;
+  timestamp: number;
+  highestPriceSinceBuy?: number;
+}
+
 // Interface para o histórico detalhado de transações (Trade Ledger)
 export interface CompletedTrade {
   id: string;                     // Identificador único da transação
